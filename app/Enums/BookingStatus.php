@@ -25,4 +25,17 @@ enum BookingStatus: string
             self::Cancelled => false,
         };
     }
+
+    /**
+ * Statuses that keep a seat reserved.
+ *
+ * @return array<int, string>
+ */
+public static function activeValues(): array
+{
+    return [
+        self::Pending->value,
+        self::Confirmed->value,
+    ];
+}
 }
