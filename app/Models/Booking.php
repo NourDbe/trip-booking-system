@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use App\Enums\BookingStatus;
 
 class Booking extends Model
 {
@@ -16,9 +17,10 @@ class Booking extends Model
 
     protected function casts(): array
     {
-        return [
-            'price' => 'decimal:2',
-        ];
+    return [
+        'status' => BookingStatus::class,
+        'price' => 'decimal:2',
+    ];
     }
 
     /**
