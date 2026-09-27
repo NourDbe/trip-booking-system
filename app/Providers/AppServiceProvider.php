@@ -3,6 +3,10 @@
 namespace App\Providers;
 
 use Illuminate\Support\ServiceProvider;
+use App\Contracts\PricingCalculatorInterface;
+use App\Services\Pricing\RegularPricingCalculator;
+use App\Services\Pricing\VipPricingCalculator;
+use App\Services\Pricing\VipTripPricingService;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -11,7 +15,15 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        //
+        $this->app->bind(
+    PricingCalculatorInterface::class,
+    RegularPricingCalculator::class
+);
+
+$this->app
+    ->when(VipTripPricingService::class)
+    ->needs(PricingCalculatorInterface::class)
+    ->give(VipPricingCalculator::class);
     }
 
     /**
