@@ -9,6 +9,12 @@ use App\Models\Trip;
 
 final class VipPricingCalculator implements PricingCalculatorInterface
 {
+    /**
+     * Calculate the price of a VIP trip.
+     *
+     * VIP trips cost 25% more than
+     * the base trip price.
+     */
     public function calculate(Trip $trip): string
     {
         return bcmul(

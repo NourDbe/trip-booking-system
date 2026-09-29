@@ -6,6 +6,8 @@ namespace App\Services;
 
 use App\Enums\BookingStatus;
 use App\Enums\TripType;
+use App\Exceptions\BookingNotFoundException;
+use App\Exceptions\InvalidBookingStatusException;
 use App\Exceptions\SeatAlreadyBookedException;
 use App\Exceptions\SeatNotFoundException;
 use App\Exceptions\TripNotFoundException;
@@ -16,23 +18,14 @@ use App\Services\Pricing\RegularTripPricingService;
 use App\Services\Pricing\VipTripPricingService;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
-use App\Exceptions\BookingNotFoundException;
-use App\Exceptions\InvalidBookingStatusException;
 
 final class BookingService
 {
     /**
-     * Inject the pricing services using Laravel's
-     * Dependency Injection system.
+     * Inject the pricing services.
      *
-     * RegularTripPricingService:
-     * Used for regular trips.
-     *
-     * VipTripPricingService:
-     * Used for VIP trips.
-     *
-     * Laravel's Service Container will resolve
-     * the dependencies required by these services.
+     * Regular trips use the regular pricing service.
+     * VIP trips use the VIP pricing service.
      */
     public function __construct(
         private RegularTripPricingService $regularPricing,
@@ -41,21 +34,11 @@ final class BookingService
     }
 
     /**
-     * Create a new booking.
+     * Create a new booking safely.
      *
-     * This method contains the main booking business logic:
-     *
-     * 1. Check that the trip exists.
-     * 2. Find and lock the requested seat.
-     * 3. Make sure the seat belongs to the requested trip.
-     * 4. Check that the seat does not already have
-     *    an active booking.
-     * 5. Calculate the booking price depending
-     *    on the trip type.
-     * 6. Create the booking.
-     *
-     * The whole process runs inside a database transaction
-     * to keep the booking operation safe and consistent.
+     * The whole operation runs inside a transaction.
+     * The seat is locked to prevent two customers
+     * from booking the same seat at the same time.
      */
     public function create(
         int $tripId,
@@ -70,10 +53,6 @@ final class BookingService
 
             /*
              * Find the requested trip.
-             *
-             * We do not use findOrFail() here because we want
-             * to throw our own domain exception and later
-             * convert it to a consistent JSON API response.
              */
             $trip = Trip::query()->find($tripId);
 
@@ -82,18 +61,11 @@ final class BookingService
             }
 
             /*
-             * Find the requested seat.
+             * Find the seat and make sure
+             * it belongs to this trip.
              *
-             * The seat must:
-             *
-             * - Have the requested ID.
-             * - Belong to the requested trip.
-             *
-             * lockForUpdate() locks the seat row until
-             * the current transaction finishes.
-             *
-             * This helps prevent two requests from booking
-             * the same seat at exactly the same time.
+             * lockForUpdate() prevents race conditions
+             * during the booking process.
              */
             $seat = Seat::query()
                 ->whereKey($seatId)
@@ -101,26 +73,15 @@ final class BookingService
                 ->lockForUpdate()
                 ->first();
 
-            /*
-             * If the seat does not exist, or exists but belongs
-             * to another trip, we treat it as an invalid seat
-             * for this booking request.
-             */
             if ($seat === null) {
                 throw new SeatNotFoundException();
             }
 
             /*
-             * Check whether this seat already has
-             * an active booking.
+             * Pending and Confirmed bookings
+             * keep the seat unavailable.
              *
-             * Active booking statuses are:
-             *
-             * - Pending
-             * - Confirmed
-             *
-             * A Cancelled booking does not block the seat,
-             * so the seat can be booked again.
+             * Cancelled bookings do not block the seat.
              */
             $hasActiveBooking = Booking::query()
                 ->where('seat_id', $seat->id)
@@ -131,24 +92,15 @@ final class BookingService
                 ->exists();
 
             /*
-             * If an active booking already exists,
-             * prevent another customer from booking
-             * the same seat.
+             * Prevent double booking.
              */
             if ($hasActiveBooking) {
                 throw new SeatAlreadyBookedException();
             }
 
             /*
-             * Calculate the final booking price according
-             * to the trip type.
-             *
-             * Regular trips use RegularTripPricingService.
-             * VIP trips use VipTripPricingService.
-             *
-             * The actual pricing calculators behind these
-             * services are resolved through Laravel's
-             * Service Container.
+             * Calculate the booking price
+             * depending on the trip type.
              */
             $price = match ($trip->type) {
                 TripType::Regular =>
@@ -159,13 +111,9 @@ final class BookingService
             };
 
             /*
-             * Create the new booking.
+             * Create the booking.
              *
-             * New bookings start with Pending status.
-             *
-             * The calculated price is stored in the booking
-             * itself so that changing the trip price later
-             * does not change old booking prices.
+             * Every new booking starts as Pending.
              */
             return Booking::query()->create([
                 'customer_id' => $customerId,
@@ -177,18 +125,13 @@ final class BookingService
     }
 
     /**
-     * Get all currently available seats for a trip.
-     *
-     * A seat is considered available when it does not have
-     * a Pending or Confirmed booking.
-     *
-     * Cancelled bookings do not prevent the seat
-     * from appearing as available.
+     * Get all currently available seats
+     * for a specific trip.
      */
     public function availableSeats(int $tripId): Collection
     {
         /*
-         * First make sure that the requested trip exists.
+         * Make sure the trip exists.
          */
         $tripExists = Trip::query()
             ->whereKey($tripId)
@@ -197,114 +140,10 @@ final class BookingService
         if (! $tripExists) {
             throw new TripNotFoundException();
         }
-        /**
- * Get one booking by its ID.
- */
-public function find(int $bookingId): Booking
-{
-    $booking = Booking::query()
-        ->with([
-            'customer',
-            'seat.trip.originCity',
-            'seat.trip.destinationCity',
-        ])
-        ->find($bookingId);
-
-    if ($booking === null) {
-        throw new BookingNotFoundException();
-    }
-
-    return $booking;
-}
-
-/**
- * Confirm a pending booking.
- */
-public function confirm(int $bookingId): Booking
-{
-    return DB::transaction(function () use ($bookingId): Booking {
 
         /*
-         * Lock the booking while its status
-         * is being changed.
-         */
-        $booking = Booking::query()
-            ->lockForUpdate()
-            ->find($bookingId);
-
-        if ($booking === null) {
-            throw new BookingNotFoundException();
-        }
-
-        /*
-         * Only Pending bookings can become Confirmed.
-         */
-        if ($booking->status !== BookingStatus::Pending) {
-            throw new InvalidBookingStatusException(
-                'Only pending bookings can be confirmed.'
-            );
-        }
-
-        $booking->update([
-            'status' => BookingStatus::Confirmed,
-        ]);
-
-        return $booking->refresh()->load([
-            'customer',
-            'seat.trip.originCity',
-            'seat.trip.destinationCity',
-        ]);
-    });
-}
-
-/**
- * Cancel an active booking.
- *
- * Both Pending and Confirmed bookings
- * can be cancelled.
- */
-public function cancel(int $bookingId): Booking
-{
-    return DB::transaction(function () use ($bookingId): Booking {
-
-        $booking = Booking::query()
-            ->lockForUpdate()
-            ->find($bookingId);
-
-        if ($booking === null) {
-            throw new BookingNotFoundException();
-        }
-
-        /*
-         * A cancelled booking cannot
-         * be cancelled again.
-         */
-        if ($booking->status === BookingStatus::Cancelled) {
-            throw new InvalidBookingStatusException(
-                'This booking is already cancelled.'
-            );
-        }
-
-        $booking->update([
-            'status' => BookingStatus::Cancelled,
-        ]);
-
-        return $booking->refresh()->load([
-            'customer',
-            'seat.trip.originCity',
-            'seat.trip.destinationCity',
-        ]);
-    });
-    }
-
-        /*
-         * Get all seats belonging to the trip that do NOT
-         * have an active booking.
-         *
-         * whereDoesntHave() means:
-         *
-         * Give me seats where no related booking exists
-         * with a Pending or Confirmed status.
+         * Return seats that do not have
+         * a Pending or Confirmed booking.
          */
         return Seat::query()
             ->where('trip_id', $tripId)
@@ -319,5 +158,136 @@ public function cancel(int $bookingId): Booking
             )
             ->orderBy('seat_number')
             ->get();
+    }
+
+    /**
+     * Find one booking by ID.
+     *
+     * Related customer, seat, trip,
+     * origin city and destination city
+     * are loaded for the API response.
+     */
+    public function find(int $bookingId): Booking
+    {
+        $booking = Booking::query()
+            ->with([
+                'customer',
+                'seat.trip.originCity',
+                'seat.trip.destinationCity',
+            ])
+            ->find($bookingId);
+
+        if ($booking === null) {
+            throw new BookingNotFoundException();
+        }
+
+        return $booking;
+    }
+
+    /**
+     * Confirm a pending booking.
+     */
+    public function confirm(int $bookingId): Booking
+    {
+        return DB::transaction(function () use (
+            $bookingId
+        ): Booking {
+
+            /*
+             * Lock the booking while changing its status.
+             */
+            $booking = Booking::query()
+                ->lockForUpdate()
+                ->find($bookingId);
+
+            if ($booking === null) {
+                throw new BookingNotFoundException();
+            }
+
+            /*
+             * Only Pending bookings
+             * can become Confirmed.
+             */
+            if ($booking->status !== BookingStatus::Pending) {
+                throw new InvalidBookingStatusException(
+                    'Only pending bookings can be confirmed.'
+                );
+            }
+
+            /*
+             * Change booking status.
+             */
+            $booking->update([
+                'status' => BookingStatus::Confirmed,
+            ]);
+
+            /*
+             * Reload the booking and its relations
+             * before returning it.
+             */
+            return $booking
+                ->refresh()
+                ->load([
+                    'customer',
+                    'seat.trip.originCity',
+                    'seat.trip.destinationCity',
+                ]);
+        });
+    }
+
+    /**
+     * Cancel an active booking.
+     *
+     * Pending and Confirmed bookings
+     * can both be cancelled.
+     */
+    public function cancel(int $bookingId): Booking
+    {
+        return DB::transaction(function () use (
+            $bookingId
+        ): Booking {
+
+            /*
+             * Lock the booking while changing its status.
+             */
+            $booking = Booking::query()
+                ->lockForUpdate()
+                ->find($bookingId);
+
+            if ($booking === null) {
+                throw new BookingNotFoundException();
+            }
+
+            /*
+             * A cancelled booking cannot
+             * be cancelled again.
+             */
+            if ($booking->status === BookingStatus::Cancelled) {
+                throw new InvalidBookingStatusException(
+                    'This booking is already cancelled.'
+                );
+            }
+
+            /*
+             * Mark the booking as cancelled.
+             *
+             * After cancellation, the seat
+             * becomes available again.
+             */
+            $booking->update([
+                'status' => BookingStatus::Cancelled,
+            ]);
+
+            /*
+             * Reload relations for the API response.
+             */
+            return $booking
+                ->refresh()
+                ->load([
+                    'customer',
+                    'seat.trip.originCity',
+                    'seat.trip.destinationCity',
+                ]);
+        });
     }
 }

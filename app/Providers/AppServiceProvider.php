@@ -13,17 +13,30 @@ class AppServiceProvider extends ServiceProvider
     /**
      * Register any application services.
      */
-    public function register(): void
-    {
-        $this->app->bind(
-    PricingCalculatorInterface::class,
-    RegularPricingCalculator::class
-);
+   public function register(): void
+{
+    /*
+     * Default implementation.
+     *
+     * Any class asking for PricingCalculatorInterface
+     * receives RegularPricingCalculator by default.
+     */
+    $this->app->bind(
+        PricingCalculatorInterface::class,
+        RegularPricingCalculator::class
+    );
 
-$this->app
-    ->when(VipTripPricingService::class)
-    ->needs(PricingCalculatorInterface::class)
-    ->give(VipPricingCalculator::class);
+    /*
+     * Contextual Binding.
+     *
+     * When VipTripPricingService asks for
+     * PricingCalculatorInterface, inject
+     * VipPricingCalculator instead.
+     */
+    $this->app
+        ->when(VipTripPricingService::class)
+        ->needs(PricingCalculatorInterface::class)
+        ->give(VipPricingCalculator::class);
     }
 
     /**

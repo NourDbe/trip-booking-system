@@ -3,6 +3,7 @@
 use App\Http\Controllers\Api\BookingController;
 use App\Http\Controllers\Api\TripController;
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Api\CustomerController;
 
 /*
 |--------------------------------------------------------------------------
@@ -50,3 +51,14 @@ Route::patch('/bookings/{bookingId}/cancel', [
     BookingController::class,
     'cancel',
 ])->whereNumber('bookingId');
+
+/*
+|--------------------------------------------------------------------------
+| Customer API Routes
+|--------------------------------------------------------------------------
+*/
+
+Route::post('/customers', [
+    CustomerController::class,
+    'store',
+]);
