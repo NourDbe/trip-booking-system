@@ -8,15 +8,16 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use RuntimeException;
 
-final class TripNotFoundException extends RuntimeException
+final class BookingNotFoundException extends RuntimeException
 {
     public function __construct()
     {
-        parent::__construct(
-            'The requested trip was not found.'
-        );
+        parent::__construct('The requested booking was not found.');
     }
 
+    /**
+     * Return the exception as a JSON API response.
+     */
     public function render(Request $request): JsonResponse
     {
         return response()->json([
